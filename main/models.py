@@ -4,6 +4,7 @@ from django.db.models import Sum, F
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
+from django.db.models import Q
 
 
 class Category(models.Model):
@@ -33,7 +34,7 @@ class Book(models.Model):
             models.Index(fields=["judul"]),
             models.Index(fields=["author"]),
         ]
-    
+
     def clean(self):
         if self.diskon_persen < 0 or self.diskon_persen > 100:
             raise ValidationError("Diskon harus antara 0-100%")
@@ -48,9 +49,6 @@ class Book(models.Model):
 class Sale(models.Model):
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
     total_harga = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    
-    created_at = models.DateTimeField(default=timezone.now, db_index=True)
-    total_harga = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     def update_total(self):
         total = self.items.aggregate(
@@ -63,15 +61,11 @@ class Sale(models.Model):
     def __str__(self):
         return f"Sale #{self.id}"
 
-        
-        
-    def __str__(self):
-        return f"Sale #{self.id}"
     
 
 class SaleItem(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name="items")
-    
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     book = models.ForeignKey(Book, on_delete=models.SET_NULL, null=True, blank=True)
        
     # snapshot untuk transaksi
@@ -90,4 +84,4 @@ class SaleItem(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.book.judul} x {self.kuantitas}"
+        return f"{self.judul_buku} x {self.kuantitas}"
