@@ -42,26 +42,19 @@ class CheckoutView(APIView):
             )
 
         if not cart.items.exists():
-            return Response(
-                {"error": "Cart kosong"},
-                status=400
-            )
+            return Response({"error": "Cart kosong"}, status=400)
 
         sale = Sale.objects.create()
 
         for item in cart.items.all():
             book = Book.objects.select_for_update().get(id=item.book.id)
-
             if book.stok < item.kuantitas:
                 return Response(
                     {"error": f"Stok tidak cukup untuk {book.judul}"},
                     status=400
                 )
 
-            # Kurangi stok (atomic)
-            Book.objects.filter(id=book.id).update(
-                stok=F("stok") - item.kuantitas
-            )
+            Book.objects.filter(id=book.id).update(stok=F("stok") - item.kuantitas)
 
             SaleItem.objects.create(
                 sale=sale,
@@ -76,12 +69,20 @@ class CheckoutView(APIView):
 
         sale.update_total()
 
+        # Tandai cart lama sudah checkout
         cart.is_checked_out = True
         cart.save(update_fields=["is_checked_out"])
 
+        # Hapus semua item di cart lama
+        cart.items.all().delete()
+
+        # Buat cart baru untuk user
+        new_cart = Cart.objects.create(is_checked_out=False)
+
         return Response({
             "sale_id": sale.id,
-            "total_harga": sale.total_harga
+            "total_harga": sale.total_harga,
+            "new_cart_id": new_cart.id
         }, status=201)
         
 class DailyReportView(APIView):
