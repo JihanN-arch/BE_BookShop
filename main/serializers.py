@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Book, Category, Sale, SaleItem
+from .models import Book, Category, Sale, SaleItem, Cart, CartItem
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -54,3 +54,47 @@ class SaleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = "__all__"
+        
+class CartItemSerializer(serializers.ModelSerializer):
+    book_detail = BookSerializer(source="book", read_only=True)  # <-- ini baru
+
+    class Meta:
+        model = CartItem
+        fields = ["id", "cart", "book", "book_detail", "kuantitas"]  # tambahin book_detail
+
+    def validate(self, data):
+        if data["cart"].is_checked_out:
+            raise serializers.ValidationError("Cart sudah di-checkout")
+        if data["book"].stok < data["kuantitas"]:
+            raise serializers.ValidationError("Stok tidak cukup")
+        return data
+
+    def validate_kuantitas(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Kuantitas harus lebih dari 0")
+        return value
+
+    def create(self, validated_data):
+        cart = validated_data["cart"]
+        book = validated_data["book"]
+        qty = validated_data["kuantitas"]
+
+        item, created = CartItem.objects.get_or_create(
+            cart=cart,
+            book=book,
+            defaults={"kuantitas": qty}
+        )
+
+        if not created:
+            item.kuantitas += qty
+            item.save(update_fields=["kuantitas"])
+
+        return item
+    
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Cart
+        fields = ["id", "created_at", "is_checked_out", "items"]
+        

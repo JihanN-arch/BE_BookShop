@@ -15,6 +15,7 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from rest_framework.viewsets import ReadOnlyModelViewSet
+from rest_framework.decorators import action
 
 
 # Create your views here.
@@ -26,60 +27,62 @@ from rest_framework import status
 
 
 class CheckoutView(APIView):
-    @transaction.atomic
-    def post(self, request):
-        items = request.data.get("items", [])
 
-        if not items:
+    @transaction.atomic
+    def post(self, request, cart_id):
+        try:
+            cart = Cart.objects.prefetch_related("items__book").get(
+                id=cart_id,
+                is_checked_out=False
+            )
+        except Cart.DoesNotExist:
             return Response(
-                {"error": "Tidak ada item"},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": "Cart tidak ditemukan atau sudah checkout"},
+                status=404
+            )
+
+        if not cart.items.exists():
+            return Response(
+                {"error": "Cart kosong"},
+                status=400
             )
 
         sale = Sale.objects.create()
 
-        for item in items:
-            try:
-                book = Book.objects.select_for_update().get(id=item["book_id"])
-            except Book.DoesNotExist:
-                return Response({"error": "Buku tidak ditemukan"}, status=404)
-            
-            qty = item["kuantitas"]
-            if qty <= 0:
-                return Response({"error": "Jumlah barang tidak ada"}, status=400)
+        for item in cart.items.all():
+            book = Book.objects.select_for_update().get(id=item.book.id)
 
-            if book.stok < qty:
+            if book.stok < item.kuantitas:
                 return Response(
                     {"error": f"Stok tidak cukup untuk {book.judul}"},
                     status=400
                 )
 
-            # Kurangi stok secara atomic
+            # Kurangi stok (atomic)
             Book.objects.filter(id=book.id).update(
-                stok=F("stok") - qty
+                stok=F("stok") - item.kuantitas
             )
-
-            harga_asli = book.harga
-            diskon = book.diskon_persen
-            harga_final = book.get_harga_diskon()
 
             SaleItem.objects.create(
                 sale=sale,
                 book=book,
                 judul_buku=book.judul,
                 isbn_buku=book.isbn,
-                harga_asli=harga_asli,
-                diskon_persen=diskon,
-                harga_final=harga_final,
-                kuantitas=qty
+                harga_asli=book.harga,
+                diskon_persen=book.diskon_persen,
+                harga_final=book.get_harga_diskon(),
+                kuantitas=item.kuantitas
             )
 
         sale.update_total()
 
+        cart.is_checked_out = True
+        cart.save(update_fields=["is_checked_out"])
+
         return Response({
             "sale_id": sale.id,
             "total_harga": sale.total_harga
-        }, status=status.HTTP_201_CREATED)
+        }, status=201)
         
 class DailyReportView(APIView):
 
@@ -109,13 +112,33 @@ class CategoryViewSet(ModelViewSet):
 class BookViewSet(ModelViewSet):
     queryset = Book.objects.all().select_related("kategori")
     serializer_class = BookSerializer
-    pagination_class = BookPagination
 
+    # Bisa filter, search, ordering sama seperti sebelumnya
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-
     filterset_fields = ["kategori", "is_active"]
     search_fields = ["judul", "author", "isbn"]
     ordering_fields = ["harga", "stok", "judul"]
+
+    # Increment stok buku
+    @action(detail=True, methods=['post'])
+    def add_stock(self, request, pk=None):
+        book = self.get_object()
+        qty = int(request.data.get("quantity", 1))
+        book.stok += qty
+        book.save(update_fields=["stok"])
+        return Response({'status': 'stok ditambah', 'stok': book.stok})
+
+    # Kurangi stok buku
+    @action(detail=True, methods=['post'])
+    def reduce_stock(self, request, pk=None):
+        book = self.get_object()
+        qty = int(request.data.get("quantity", 1))
+        if book.stok >= qty:
+            book.stok -= qty
+            book.save(update_fields=["stok"])
+            return Response({'status': 'stok dikurangi', 'stok': book.stok})
+        else:
+            return Response({'error': 'stok tidak cukup'}, status=status.HTTP_400_BAD_REQUEST)
     
 class SaleViewSet(ReadOnlyModelViewSet):
     queryset = Sale.objects.all().prefetch_related("items")
@@ -155,3 +178,70 @@ class ReportView(APIView):
             "total_transaksi": total_transaksi,
             "best_seller": best_seller
         })
+        
+from rest_framework.viewsets import ModelViewSet
+from .models import Cart, CartItem
+from .serializers import CartSerializer, CartItemSerializer
+
+
+class CartViewSet(ModelViewSet):
+    queryset = Cart.objects.all().prefetch_related("items__book")
+    serializer_class = CartSerializer
+    
+    
+class CartItemViewSet(ModelViewSet):
+    queryset = CartItem.objects.select_related("book", "cart")
+    serializer_class = CartItemSerializer
+
+    # Custom create: jika buku sama, tambah kuantitas
+    def create(self, request, *args, **kwargs):
+        cart_id = request.data.get("cart")
+        book_id = request.data.get("book")
+        qty = int(request.data.get("kuantitas", 1))
+
+        if not cart_id or not Cart.objects.filter(id=cart_id, is_checked_out=False).exists():
+            cart = Cart.objects.create(is_checked_out=False)
+            cart_id = cart.id
+            
+        try:
+            cart_item = CartItem.objects.get(cart_id=cart_id, book_id=book_id)
+            cart_item.kuantitas += qty
+            cart_item.save(update_fields=["kuantitas"])
+            serializer = self.get_serializer(cart_item)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except CartItem.DoesNotExist:
+            serializer = self.get_serializer(data={
+                "cart": cart_id,
+                "book": book_id,
+                "kuantitas": qty
+            })
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # Increment kuantitas
+    @action(detail=True, methods=['post'])
+    def increment(self, request, pk=None):
+        item = self.get_object()
+        item.kuantitas += 1
+        item.save(update_fields=['kuantitas'])
+        return Response({'status': 'kuantitas ditambah', 'kuantitas': item.kuantitas})
+
+    # Decrement kuantitas (hapus jika 1)
+    @action(detail=True, methods=['post'])
+    def decrement(self, request, pk=None):
+        item = self.get_object()
+        if item.kuantitas > 1:
+            item.kuantitas -= 1
+            item.save(update_fields=['kuantitas'])
+            return Response({'status': 'kuantitas dikurangi', 'kuantitas': item.kuantitas})
+        else:
+            item.delete()
+            return Response({'status': 'item dihapus'})
+
+    # Hapus semua item dalam cart
+    @action(detail=False, methods=['post'])
+    def clear_cart(self, request):
+        cart_id = request.data.get("cart")
+        CartItem.objects.filter(cart_id=cart_id).delete()
+        return Response({'status': 'cart dikosongkan'}, status=status.HTTP_204_NO_CONTENT)

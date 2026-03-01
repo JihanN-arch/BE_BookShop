@@ -6,15 +6,19 @@ from .views import (
     SaleViewSet,
     CheckoutView,
     ReportView,
+    CartViewSet,
+    CartItemViewSet,
 )
 
 router = DefaultRouter()
 router.register(r"books", BookViewSet)
 router.register(r"categories", CategoryViewSet)
 router.register(r"sales", SaleViewSet)
+router.register(r"carts", CartViewSet)
+router.register(r"cart-items", CartItemViewSet)
 
 urlpatterns = [
     path("", include(router.urls)),
-    path("sales/checkout/", CheckoutView.as_view()),
+    path("sales/checkout/<int:cart_id>/", CheckoutView.as_view()),
     path("sales/report/", ReportView.as_view()),
 ]

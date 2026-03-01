@@ -85,3 +85,22 @@ class SaleItem(models.Model):
     
     def __str__(self):
         return f"{self.judul_buku} x {self.kuantitas}"
+
+
+class Cart(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_checked_out = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Cart #{self.id}"
+    
+class CartItem(models.Model):
+    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="items")
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    kuantitas = models.PositiveIntegerField()
+
+    class Meta:
+        unique_together = ("cart", "book")
+
+    def __str__(self):
+        return f"{self.book.judul} x {self.kuantitas}"
