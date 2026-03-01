@@ -69,14 +69,14 @@ class CheckoutView(APIView):
 
         sale.update_total()
 
-        # Tandai cart lama sudah checkout
+        # tandain cart yg udh ckeout
         cart.is_checked_out = True
         cart.save(update_fields=["is_checked_out"])
 
-        # Hapus semua item di cart lama
+        # Hapus item di cart lma
         cart.items.all().delete()
 
-        # Buat cart baru untuk user
+        # buat cart bru
         new_cart = Cart.objects.create(is_checked_out=False)
 
         return Response({
@@ -114,13 +114,13 @@ class BookViewSet(ModelViewSet):
     queryset = Book.objects.all().select_related("kategori")
     serializer_class = BookSerializer
 
-    # Bisa filter, search, ordering sama seperti sebelumnya
+    # buat filter, blm imple,entasi
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["kategori", "is_active"]
     search_fields = ["judul", "author", "isbn"]
     ordering_fields = ["harga", "stok", "judul"]
 
-    # Increment stok buku
+    # nambh stok buku
     @action(detail=True, methods=['post'])
     def add_stock(self, request, pk=None):
         book = self.get_object()
@@ -129,7 +129,7 @@ class BookViewSet(ModelViewSet):
         book.save(update_fields=["stok"])
         return Response({'status': 'stok ditambah', 'stok': book.stok})
 
-    # Kurangi stok buku
+    # kurngin sotk buku
     @action(detail=True, methods=['post'])
     def reduce_stock(self, request, pk=None):
         book = self.get_object()
@@ -194,7 +194,7 @@ class CartItemViewSet(ModelViewSet):
     queryset = CartItem.objects.select_related("book", "cart")
     serializer_class = CartItemSerializer
 
-    # Custom create: jika buku sama, tambah kuantitas
+    
     def create(self, request, *args, **kwargs):
         cart_id = request.data.get("cart")
         book_id = request.data.get("book")
@@ -220,7 +220,7 @@ class CartItemViewSet(ModelViewSet):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    # Increment kuantitas
+    # nmbh kuantitas
     @action(detail=True, methods=['post'])
     def increment(self, request, pk=None):
         item = self.get_object()
@@ -228,7 +228,7 @@ class CartItemViewSet(ModelViewSet):
         item.save(update_fields=['kuantitas'])
         return Response({'status': 'kuantitas ditambah', 'kuantitas': item.kuantitas})
 
-    # Decrement kuantitas (hapus jika 1)
+    # Decrment kuantitas
     @action(detail=True, methods=['post'])
     def decrement(self, request, pk=None):
         item = self.get_object()
@@ -240,7 +240,8 @@ class CartItemViewSet(ModelViewSet):
             item.delete()
             return Response({'status': 'item dihapus'})
 
-    # Hapus semua item dalam cart
+    # hpus item dlm cart
+
     @action(detail=False, methods=['post'])
     def clear_cart(self, request):
         cart_id = request.data.get("cart")
